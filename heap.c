@@ -25,7 +25,7 @@ void heap_clean(void){
 }
 
 void* heap_malloc(size_t size){
-    if(size <= 0 || heap_validate() != 0)
+    if(size == 0 || heap_validate() != 0)
         return NULL;
 
     if(memory_manager.first_memory_chunk == NULL){
@@ -33,11 +33,16 @@ void* heap_malloc(size_t size){
     }
     else{
         struct memory_chunk_t *temp = memory_manager.first_memory_chunk;
-        while(temp->next != NULL){
+        while(1){
             if((size + (2 * FENCE)) <= temp->size && temp->free == 1){
                 return insert_into_chunk(temp, size);
             }
+            if(temp->next == NULL)
+                break;
             temp = temp->next;
+        }
+        if(temp->free == 1){
+            return extend_and_insert_chunk(temp, size);
         }
         return create_new_chunk(temp, size);
     }
@@ -49,25 +54,94 @@ void* heap_calloc(size_t number, size_t size){
     void* chunk = heap_malloc(number * size);
     if(chunk == NULL)
         return NULL;
-    memset(chunk, 0, number * size);
+    memset(chunk, 0, number * size);    //moze byc blad przez 0
     return chunk;
 }
 
 void* heap_realloc(void* memblock, size_t count){
+    if(heap_validate() != 0)
+        return NULL;
+    //jesli na koncu sterty
+    if(memory_manager.first_memory_chunk == NULL)
+        return heap_malloc(count);
+    if(count == 0){
+        heap_free(memblock);
+        return memblock;
+    }
+
+    struct memory_chunk_t* temp = memblock;
+
+    if(temp->size == count)
+        return memblock;
+    else if(temp->size > count){
+        return realloc_at_place(temp, count);
+    }
+    else{
+        if(((unsigned char*)temp->next - (unsigned char*)temp) <= (long)(sizeof(struct memory_chunk_t) + (2 * FENCE) + count)){
+            return realloc_at_place(temp, count);
+        }
+        else if(temp->next->free == 1 && ((unsigned char*)temp->next->next - (unsigned char*)temp) <= (long)((2 * FENCE) + count)){
+            return realloc_by_merging(temp, count);
+        }
+    }
     return NULL;
 }
 
-void heap_free(void* memblock){ //add clearing freed memory from the end
-    if(memblock == NULL && heap_validate() != 0)
+void heap_free(void* memblock){
+    if(get_pointer_type(memblock) != pointer_valid)
         return;
     struct memory_chunk_t* chunk = (struct memory_chunk_t*)((unsigned char*)memblock - FENCE - sizeof(struct memory_chunk_t));
     chunk->free = 1;
-    chunk->size += 2 * FENCE;
-    check_and_merge(chunk);
+    chunk = check_and_merge(chunk);
+    chunk->checksum = checksum_count(chunk);
+//    if(memory_manager.first_memory_chunk == chunk && chunk->next == NULL)
+//        memory_manager.first_memory_chunk = NULL;
+}
+
+void* check_and_merge(struct memory_chunk_t* chunk){
+    int flag = 0;
+    if(chunk->next != NULL){
+        if(chunk->next->free == 1){
+            chunk->size = (unsigned char*)chunk->next - (unsigned char*)chunk + chunk->next->size + FENCE;
+            chunk->next = chunk->next->next;
+            if(chunk->next != NULL)
+                chunk->next->prev = chunk;
+            flag = 1;
+        }
+    }
+    if(chunk->prev != NULL){
+        if(chunk->prev->free == 1){
+            size_t temp_size;
+            temp_size = (unsigned char*)chunk - (unsigned char*)chunk->prev + chunk->size + FENCE;
+            chunk = chunk->prev;
+            if(chunk->next->next != NULL)
+                chunk->next->next->prev = chunk;
+            chunk->next = chunk->next->next;
+            chunk->size = temp_size;
+            flag = 1;
+        }
+    }
+    if(flag == 0){
+        chunk->size = (unsigned char*)chunk->next - (unsigned char*)chunk - sizeof(struct memory_chunk_t);
+    }
+    if(chunk->next != NULL)
+        chunk->next->checksum = checksum_count(chunk->next);
+    if(chunk->prev != NULL)
+        chunk->prev->checksum = checksum_count(chunk->prev);
+    return chunk;
 }
 
 size_t heap_get_largest_used_block_size(void){
-    return 0;
+    if(check_fences() != 0 || memory_manager.setup == 0 || memory_manager.first_memory_chunk == NULL)
+        return 0;
+    struct memory_chunk_t* temp = memory_manager.first_memory_chunk;
+    size_t max_size = 0;
+    while(temp != NULL){
+        if(max_size < temp->size && temp->free == 0)
+            max_size = temp->size;
+        temp = temp->next;
+    }
+    return max_size;
 }
 
 enum pointer_type_t get_pointer_type(const void* const pointer){
@@ -114,6 +188,8 @@ enum pointer_type_t get_pointer_type(const void* const pointer){
 int heap_validate(void){
     if(memory_manager.setup == 0)
         return 2;
+    if(checksum_check() != 0)
+        return 3;
     if(check_fences() != 0)
         return 1;
     return 0;
@@ -149,6 +225,7 @@ void* first_chunk(size_t size){
     first->size = size;
     first->free = 0;
     set_fence(first);
+    first->checksum = checksum_count(first);
     return (unsigned char*)first + sizeof(struct memory_chunk_t) + FENCE;
 }
 
@@ -168,6 +245,8 @@ void* create_new_chunk(struct memory_chunk_t *prev, size_t size){
     new_chunk->size = size;
     new_chunk->free = 0;
     set_fence(new_chunk);
+    new_chunk->checksum = checksum_count(new_chunk);
+    prev->checksum = checksum_count(prev);
     return (unsigned char*)new_chunk + sizeof(struct memory_chunk_t) + FENCE;
 }
 
@@ -180,27 +259,6 @@ void display_info(){
         else
             printf("condition: FREE");
     }
-}
-
-void check_and_merge(struct memory_chunk_t* chunk){
-    if(chunk->next != NULL){
-        if(chunk->next->free == 1){
-            chunk->size += chunk->next->size + sizeof(struct memory_chunk_t);
-            chunk->next = chunk->next->next;
-            chunk->next->prev = chunk;
-        }
-    }
-    if(chunk->prev != NULL){
-        if(chunk->prev->free == 1){
-            chunk->prev->size += chunk->size + sizeof(struct memory_chunk_t);
-            chunk->prev->next = chunk->next;
-            chunk = chunk->prev;
-            if(chunk->next != NULL)
-                chunk->next->prev = chunk;
-        }
-    }
-    if(chunk->prev == NULL)
-        memory_manager.first_memory_chunk = chunk;
 }
 
 int check_fences(){
@@ -221,5 +279,53 @@ void* insert_into_chunk(struct memory_chunk_t* chunk, size_t size){
     chunk->size = size;
     chunk->free = 0;
     set_fence(chunk);
+    chunk->checksum = checksum_count(chunk);
     return (unsigned char*)chunk + sizeof(struct memory_chunk_t) + FENCE;
+}
+
+void* extend_and_insert_chunk(struct memory_chunk_t* chunk, size_t size){
+    if(increase_memory(((sizeof(struct memory_chunk_t) + (2 * FENCE) + size) - chunk->size)) == -1)
+        return NULL;
+    chunk->size = size;
+    chunk->free = 0;
+    set_fence(chunk);
+    chunk->checksum = checksum_count(chunk);
+    return (unsigned char*)chunk + sizeof(struct memory_chunk_t) + FENCE;
+}
+
+unsigned int checksum_count(struct memory_chunk_t *chunk){
+    unsigned int sum = 0;
+    unsigned char* pointer = (unsigned char*)chunk;
+    for(int i = 0; i < (int)(sizeof(struct memory_chunk_t) - sizeof(unsigned int)); i++){
+        sum += *(pointer + i);
+    }
+    return sum;
+}
+
+int checksum_check(){
+    struct memory_chunk_t* temp = memory_manager.first_memory_chunk;
+    while(temp != NULL){
+        if(temp->checksum != checksum_count(temp)){
+            return -1;
+        }
+        temp = temp->next;
+    }
+    return 0;
+}
+
+void* realloc_at_place(struct memory_chunk_t* chunk, size_t new_size){
+    chunk->size = new_size;
+    set_fence(chunk);
+    chunk->checksum = checksum_count(chunk);
+    return chunk;
+}
+
+void* realloc_by_merging(struct memory_chunk_t* chunk, size_t new_size){
+    chunk->size = new_size;
+    chunk->next = chunk->next->next;
+    chunk->next->prev = chunk;
+    set_fence(chunk);
+    chunk->checksum = checksum_count(chunk);
+    chunk->next->checksum = checksum_count(chunk);
+    return chunk;
 }

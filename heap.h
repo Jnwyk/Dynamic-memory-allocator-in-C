@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <assert.h>
 #include "custom_unistd.h"
 
 #define FENCE 8
@@ -26,6 +28,7 @@ struct memory_chunk_t
     struct memory_chunk_t* next;
     size_t size;
     int free; // occupied - 0, free - 1
+    unsigned int checksum;
 };
 
 enum pointer_type_t
@@ -62,8 +65,13 @@ int increase_memory (size_t mem);
 void set_fence(struct memory_chunk_t *chunk);
 void* create_new_chunk(struct memory_chunk_t *prev, size_t size);
 void display_info();
-void check_and_merge(struct memory_chunk_t* chunk);
+void* check_and_merge(struct memory_chunk_t* chunk);
 int check_fences();
 void* insert_into_chunk(struct memory_chunk_t* chunk, size_t size);
+void* extend_and_insert_chunk(struct memory_chunk_t* chunk, size_t size);
+unsigned int checksum_count(struct memory_chunk_t *chunk);
+int checksum_check();
+void* realloc_at_place(struct memory_chunk_t* chunk, size_t new_size);
+void* realloc_by_merging(struct memory_chunk_t* chunk, size_t new_size);
 
 #endif //PROJECT1_HEAP_H
