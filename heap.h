@@ -19,6 +19,7 @@ struct memory_manager_t
     void *memory_start;
     size_t memory_size;
     struct memory_chunk_t *first_memory_chunk;
+//    struct memory_chunk_t *tail;
     int setup; // initialized = 1, not initialize = 0
 }memory_manager;
 
@@ -73,5 +74,8 @@ unsigned int checksum_count(struct memory_chunk_t *chunk);
 int checksum_check();
 void* realloc_at_place(struct memory_chunk_t* chunk, size_t new_size);
 void* realloc_by_merging(struct memory_chunk_t* chunk, size_t new_size);
+void* resize_by_increasing_memory(struct memory_chunk_t* chunk, size_t size);
+void* realloc_extend_and_insert_chunk(struct memory_chunk_t* chunk, size_t size);
+void* find_last_chunk();
 
 #endif //PROJECT1_HEAP_H

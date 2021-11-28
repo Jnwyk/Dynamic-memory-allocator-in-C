@@ -12,6 +12,7 @@ int heap_setup(void){
     memory_manager.memory_size = 0;
     memory_manager.setup = 1;
     memory_manager.first_memory_chunk = NULL;
+//    memory_manager.tail = NULL;
     return 0;
 }
 
@@ -21,6 +22,7 @@ void heap_clean(void){
     memory_manager.memory_start = NULL;
     memory_manager.setup = 0;
     memory_manager.first_memory_chunk = NULL;
+//    memory_manager.tail = NULL;
     return;
 }
 
@@ -54,37 +56,49 @@ void* heap_calloc(size_t number, size_t size){
     void* chunk = heap_malloc(number * size);
     if(chunk == NULL)
         return NULL;
-    memset(chunk, 0, number * size);    //moze byc blad przez 0
+    memset(chunk, 0, number * size);
     return chunk;
 }
 
 void* heap_realloc(void* memblock, size_t count){
     if(heap_validate() != 0)
         return NULL;
-    //jesli na koncu sterty
-    if(memory_manager.first_memory_chunk == NULL)
+    if(memblock == NULL){
         return heap_malloc(count);
+    }
+    if(get_pointer_type(memblock) != pointer_valid){
+        return NULL;
+    }
     if(count == 0){
         heap_free(memblock);
-        return memblock;
+        return NULL;
     }
 
-    struct memory_chunk_t* temp = memblock;
+    struct memory_chunk_t* temp = (struct memory_chunk_t*)((unsigned char*)memblock - sizeof(struct memory_chunk_t) - FENCE);
+    struct memory_chunk_t* last = find_last_chunk();
 
+    if(temp == last){
+        return realloc_extend_and_insert_chunk(last, count - last->size);
+    }
     if(temp->size == count)
         return memblock;
     else if(temp->size > count){
         return realloc_at_place(temp, count);
     }
     else{
-        if(((unsigned char*)temp->next - (unsigned char*)temp) <= (long)(sizeof(struct memory_chunk_t) + (2 * FENCE) + count)){
+        if(((unsigned char*)temp->next - (unsigned char*)temp) >= (long)(sizeof(struct memory_chunk_t) + (2 * FENCE) + count)){
             return realloc_at_place(temp, count);
         }
-        else if(temp->next->free == 1 && ((unsigned char*)temp->next->next - (unsigned char*)temp) <= (long)((2 * FENCE) + count)){
-            return realloc_by_merging(temp, count);
+        else if(temp->next->next != NULL){
+            if(temp->next->free == 1 && ((unsigned char*)temp->next->next - (unsigned char*)temp) >= (long)(sizeof(struct memory_chunk_t) + (2 * FENCE) + count))
+                return realloc_by_merging(temp, count);
+            else
+                return resize_by_increasing_memory(temp, count);
+        }
+        else{
+            return resize_by_increasing_memory(temp, count);
         }
     }
-    return NULL;
 }
 
 void heap_free(void* memblock){
@@ -122,7 +136,8 @@ void* check_and_merge(struct memory_chunk_t* chunk){
         }
     }
     if(flag == 0){
-        chunk->size = (unsigned char*)chunk->next - (unsigned char*)chunk - sizeof(struct memory_chunk_t);
+        if(chunk->next != NULL)
+            chunk->size = (unsigned char*)chunk->next - (unsigned char*)chunk - sizeof(struct memory_chunk_t);
     }
     if(chunk->next != NULL)
         chunk->next->checksum = checksum_count(chunk->next);
@@ -226,6 +241,7 @@ void* first_chunk(size_t size){
     first->free = 0;
     set_fence(first);
     first->checksum = checksum_count(first);
+//    memory_manager.tail = first;
     return (unsigned char*)first + sizeof(struct memory_chunk_t) + FENCE;
 }
 
@@ -247,6 +263,7 @@ void* create_new_chunk(struct memory_chunk_t *prev, size_t size){
     set_fence(new_chunk);
     new_chunk->checksum = checksum_count(new_chunk);
     prev->checksum = checksum_count(prev);
+//    memory_manager.tail = new_chunk;
     return (unsigned char*)new_chunk + sizeof(struct memory_chunk_t) + FENCE;
 }
 
@@ -317,7 +334,7 @@ void* realloc_at_place(struct memory_chunk_t* chunk, size_t new_size){
     chunk->size = new_size;
     set_fence(chunk);
     chunk->checksum = checksum_count(chunk);
-    return chunk;
+    return (unsigned char*)chunk + sizeof(struct memory_chunk_t) + FENCE;
 }
 
 void* realloc_by_merging(struct memory_chunk_t* chunk, size_t new_size){
@@ -326,6 +343,35 @@ void* realloc_by_merging(struct memory_chunk_t* chunk, size_t new_size){
     chunk->next->prev = chunk;
     set_fence(chunk);
     chunk->checksum = checksum_count(chunk);
-    chunk->next->checksum = checksum_count(chunk);
-    return chunk;
+    chunk->next->checksum = checksum_count(chunk->next);
+    return (unsigned char*)chunk + sizeof(struct memory_chunk_t) + FENCE;
+}
+
+void* resize_by_increasing_memory(struct memory_chunk_t* chunk, size_t size){
+    void* new_chunk = create_new_chunk(find_last_chunk(), size);
+    if(new_chunk == NULL)
+        return NULL;
+
+    void* old_chunk = (unsigned char*)chunk + sizeof(struct memory_chunk_t) + FENCE;
+    memcpy(new_chunk, old_chunk, chunk->size);
+    heap_free(old_chunk);
+    return new_chunk;
+}
+
+void* realloc_extend_and_insert_chunk(struct memory_chunk_t* chunk, size_t size){
+    if(increase_memory(size) == -1)
+        return NULL;
+    chunk->size = size + chunk->size;
+    chunk->free = 0;
+    set_fence(chunk);
+    chunk->checksum = checksum_count(chunk);
+    return (unsigned char*)chunk + sizeof(struct memory_chunk_t) + FENCE;
+}
+
+void* find_last_chunk(){
+    struct memory_chunk_t* temp = memory_manager.first_memory_chunk;
+    while(temp->next != NULL){
+        temp = temp->next;
+    }
+    return temp;
 }
