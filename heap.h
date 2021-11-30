@@ -12,14 +12,15 @@
 #include <assert.h>
 #include "custom_unistd.h"
 
+#define PAGE_SIZE 4096
 #define FENCE 8
+#define ALIGNMENT(ptr) ((intptr_t)(ptr) & (intptr_t)(PAGE_SIZE - 1))
 
 struct memory_manager_t
 {
     void *memory_start;
     size_t memory_size;
     struct memory_chunk_t *first_memory_chunk;
-//    struct memory_chunk_t *tail;
     int setup; // initialized = 1, not initialize = 0
 }memory_manager;
 
@@ -66,7 +67,6 @@ int increase_memory (size_t mem);
 void set_fence(struct memory_chunk_t *chunk);
 void* create_new_chunk(struct memory_chunk_t *prev, size_t size);
 void display_info();
-void* check_and_merge(struct memory_chunk_t* chunk);
 int check_fences();
 void* insert_into_chunk(struct memory_chunk_t* chunk, size_t size);
 void* extend_and_insert_chunk(struct memory_chunk_t* chunk, size_t size);
@@ -77,5 +77,15 @@ void* realloc_by_merging(struct memory_chunk_t* chunk, size_t new_size);
 void* resize_by_increasing_memory(struct memory_chunk_t* chunk, size_t size);
 void* realloc_extend_and_insert_chunk(struct memory_chunk_t* chunk, size_t size);
 void* find_last_chunk();
+
+void* aligned_first_chunk(size_t size);
+void* aligned_create_new_chunk(struct memory_chunk_t *prev, size_t size);
+void* aligned_resize_by_increasing_memory(struct memory_chunk_t* chunk, size_t size);
+void* aligned_realloc_extend_and_insert_chunk(struct memory_chunk_t* chunk, size_t size);
+
+
+void* merge_forward(struct memory_chunk_t* chunk);
+void* merge_backwards(struct memory_chunk_t* chunk);
+
 
 #endif //PROJECT1_HEAP_H
